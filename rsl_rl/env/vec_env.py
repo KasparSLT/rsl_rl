@@ -83,3 +83,18 @@ class VecEnv(ABC):
                 A tuple containing the observations, rewards, dones and extra information (metrics).
         """
         raise NotImplementedError
+    
+    @abstractmethod
+    def geom_update(self, geom):
+        """
+            update the geometric values in the environment
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_geom_map(self):
+        """
+            get the mask to map from all joints to the geometric joints
+        """
+        raise NotImplementedError
+    

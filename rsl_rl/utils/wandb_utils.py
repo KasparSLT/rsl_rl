@@ -24,17 +24,24 @@ class WandbSummaryWriter(SummaryWriter):
         except KeyError:
             raise KeyError("Please specify wandb_project in the runner config, e.g. legged_gym.")
 
-        try:
-            entity = os.environ["WANDB_USERNAME"]
-        except KeyError:
-            raise KeyError(
-                "Wandb username not found. Please run or add to ~/.bashrc: export WANDB_USERNAME=YOUR_USERNAME"
-            )
+        # try:
+        #     entity = os.environ["WANDB_USERNAME"]
+        # except KeyError:
+        #     raise KeyError(
+        #         "Wandb username not found. Please run or add to ~/.bashrc: export WANDB_USERNAME=YOUR_USERNAME"
+        #     )
 
-        wandb.init(project=project, entity=entity)
+        wandb.login(key = os.environ["WANDB_API_KEY"])
+        wandb.init(project=project)
+        # wandb.init(os.environ["WANDB_API_KEY"])
 
         # Change generated name to project-number format
         wandb.run.name = project + wandb.run.name.split("-")[-1]
+
+        # self.name_map = {
+        #     "Trainproject=project/mean_reward/time": "Train/mean_reward_time",
+        #     "Train/mean_episode_length/time": "Train/mean_episode_length_time",
+        # }
 
         self.name_map = {
             "Train/mean_reward/time": "Train/mean_reward_time",
@@ -42,6 +49,7 @@ class WandbSummaryWriter(SummaryWriter):
         }
 
         run_name = os.path.split(log_dir)[-1]
+        wandb.run.name = run_name
 
         wandb.log({"log_dir": run_name})
 
