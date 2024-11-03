@@ -146,7 +146,7 @@ class OnPolicyRunner:
                         cur_reward_sum[new_ids] = 0
                         cur_episode_length[new_ids] = 0
 
-                    # store rewards for geom updates
+                    # run whole geometry process
                     self.geometry_runner.store_reward(rewards, it)
 
                 stop = time.time()
@@ -156,11 +156,8 @@ class OnPolicyRunner:
                 start = stop
                 self.alg.compute_returns(critic_obs)
 
-                # Handle geometry updates, all check are within the functions, not so efficent but easier for now
-                # self.geometry_runner.store_reward(rewards, it)
-                # self.geometry_runner.update_distributions(it)
-                self.geometry_runner.update_geom(it)
-
+            self.geometry_runner.update_geom(it)
+            
             mean_value_loss, mean_surrogate_loss = self.alg.update()
             stop = time.time()
             learn_time = stop - start
@@ -219,6 +216,8 @@ class OnPolicyRunner:
         self.writer.add_scalar("Gradient/Max", self.geometry_runner.gradient.max().item(), locs["it"]) 
         self.writer.add_scalar("Gradient/Min", self.geometry_runner.gradient.min().item(), locs["it"])
         self.writer.add_scalar("Gradient/Mean", self.geometry_runner.gradient.mean().item(), locs["it"])
+        # log analytical aporx of gradient
+        self.writer.add_scalar("Gradient/Analytical", self.geometry_runner.gradient_analytic.max().item(), locs["it"])
         masked_geom = self.geometry_runner.geomety[:, self.geometry_runner.geom_mask == 1]
         mean_geom = torch.mean(masked_geom, dim=0)
         for i, geom in enumerate(mean_geom):

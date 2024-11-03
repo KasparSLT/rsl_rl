@@ -30,6 +30,7 @@ class GeometryRunner:
         self.logged_itterations = torch.tensor([], device=self.device)
 
         self.gradient = torch.tensor([0.0, 0., 0., 0., 0.], device=self.device)
+        self.gradient_analytic = torch.tensor([0.0], device=self.device)
 
         self.g = 0
 
@@ -59,7 +60,7 @@ class GeometryRunner:
         for i, dist in enumerate(self.distribution):
             if not torch.isnan(dist[0]):
                 # Create Gaussian distribution with mean and std for the corresponding joint
-                gaussian_samples = torch.normal(mean=dist[0].item(), std=dist[1].item(), size=(self.env.num_envs,), device=self.device)
+                gaussian_samples = torch.normal(mean=dist[(-1) ].item(), std=dist[1].item(), size=(self.env.num_envs,), device=self.device)
                 geom[:, i] = gaussian_samples
         
         return geom
@@ -68,9 +69,6 @@ class GeometryRunner:
         """
             process for updating the distributions from observations and rewards
         """
-        # check if needed
-        # if it > self.min_it and it % self.it_interval == 0:
-        # estimate the gradient
         gradient = self.estimate_gradient()
 
         # clip the gradient to [-0.1, 0.1]
@@ -81,46 +79,52 @@ class GeometryRunner:
         # clip the mean
         self.distribution[:, 0] = torch.clamp(self.distribution[:, 0], 0, 1)
 
-        # print all infos
-        # print("Update distributions-----------------------------------------------------------------------------------------------")
-        # print("reward: ", self.rewards)
-        # print("geometries: ", self.geomety)
-        # print("gradient: ", gradient)
-
     def estimate_gradient(self):
         """
             estimate gradient of reward(geom)
         """
         # get the average value for each geometric joint
         geom = self.geometry_log
-        average_geom = torch.mean(geom, dim=0)
+        average_geom = torch.mean(torch.mean(geom, dim=0), dim=0)
         noise = geom - average_geom
-
-        # print average_geom
-        # print("average", average_geom)
-        # get the number of datapoints1
         N = self.rewards.numel()
 
-        # print("geometry log", self.geometry_log)
-        # print("noise", noise)
-        # print("rewards", self.rewards)
+        # print the dimesions
+        # print("geom", geom.size())
+        # print("average_geom", average_geom.size())
+        # print("noise", noise.size())
+        # print("rewards", self.rewards.size())
+
 
         # init gradient shape like self.mask    
         gradient = torch.zeros_like(self.geom_mask, device=self.device)
         # calculate the gradient
-        print("i", self.rewards.size(0))
-        print("j", self.rewards.size(1))
-
-        print("i_2", noise.size(0))
-        print("j_2", noise.size(1))
-        print("n", noise.size(2))
-
+        h = 0
         for i in range(self.rewards.size(0)):
             for j in range(self.rewards.size(1)):
                 gradient += noise[i, j] * self.rewards[i, j]
+                h += 1
         gradient /= N
         self.gradient = gradient
-        # print("gradient", gradient)
+
+        # calculate analytic gradient under the assumption, that pole is vertical
+        w = -5
+        h_goal = 1
+        dt = 0.016666666666666666
+        lenth = average_geom[self.geom_mask == 1].item()
+        # gradient_analytic = - 2 * w * (h_goal - average_geom[2]) * dt
+        gradient_analytic = - 2 * w * (h_goal - lenth) * dt
+        # print("average_geom", average_geom)
+        # print("avergae_geom[1]", average_geom[2])
+        # print("gradient_analytic", gradient_analytic)
+        # print("geom", geom)
+        # print("noise", noise)
+        self.gradient_analytic = torch.tensor(gradient_analytic, device=self.device)
+        print("factor", self.gradient_analytic / self.gradient)
+
+
+
+
         return gradient
 
 
@@ -134,14 +138,14 @@ class GeometryRunner:
         # check if the reward needs to be logged
         if it > self.min_it:
             # check if the reward needs to be reset
-            # print(self.rewards)
             # if (self.logged_itterations.numel()) >= self.it_interval and self.g == 15:
             if (self.logged_itterations.numel()) >= self.it_interval:
                 self.update_distributions(it)
                 self.logged_itterations = torch.tensor([], device=self.device)
                 self.rewards = torch.empty((0, reward.size(0)), device=self.device)
+                # self.update_geom(it)
                 self.geometry_log = torch.tensor([], device=self.device)
-                print("g", self.g)
+                # print("update geom")
 
             if self.logged_itterations.numel() == 0:
                 self.logged_itterations = torch.tensor([it], device=self.device).unsqueeze(0)
@@ -152,16 +156,13 @@ class GeometryRunner:
                 else:
                     self.geometry_log = torch.cat((self.geometry_log, self.geomety.unsqueeze(0).clone()), dim=0)
                 self.g = 0
+                # print("reward_1")
 
             elif self.logged_itterations[-1] == it:
-                # print("add reward")
-                # print(reward)
                 self.rewards[-1, :] += reward
-                self.g += 1
-            elif self.logged_itterations[-1] == it - 1:
-                self.g = 0
+                # print("reward_2")
 
-                # print("add new reward")
+            elif self.logged_itterations[-1] == it - 1:
                 self.logged_itterations = torch.cat((self.logged_itterations, torch.tensor([[it]], device=self.device)), dim=0)
                 self.rewards = torch.cat((self.rewards, reward.unsqueeze(0)), dim=0)
                 # log the geometry values
@@ -169,31 +170,24 @@ class GeometryRunner:
                     self.geometry_log = self.geomety.unsqueeze(0).clone()
                 else:
                     self.geometry_log = torch.cat((self.geometry_log, self.geomety.unsqueeze(0).clone()), dim=0)
+                # print("reward_3")
 
 
     def update_geom(self, it):
         """
             sample values from the distribution and update the geometry values in the environment
         """
-        # check if neccesary 
-        if it % self.it_interval == 0 or it == 0:
-            # sample values from the distribution
-            for i, dist in enumerate(self.distribution):
-                if not torch.isnan(dist[0]):
-                    # Create Gaussian distribution with mean and std for the corresponding joint
-                    gaussian_samples = torch.normal(mean=dist[0].item(), std=dist[1].item(), size=(self.env.num_envs,), device=self.device)
-                    # clip distibution valuse [0, 1]
-                    gaussian_samples = torch.clamp(gaussian_samples, 0, 1)
-                    self.geomety[:, i] = gaussian_samples
+        # sample values from the distribution
+        for i, dist in enumerate(self.distribution):
+            if not torch.isnan(dist[0]):
+                # Create Gaussian distribution with mean and std for the corresponding joint
+                gaussian_samples = torch.normal(mean=dist[0].item(), std=dist[1].item(), size=(self.env.num_envs,), device=self.device)
+                # clip distibution valuse [0, 1]
+                gaussian_samples = torch.clamp(gaussian_samples, 0, 1)
+                self.geomety[:, i] = gaussian_samples
 
             # update the geometry values in the environment
-            self.env.geom_update(self.geomety)
-
-            # # log the geometry values
-            # if self.geometry_log.numel() == 0:
-            #     self.geometry_log = self.geomety.unsqueeze(0).clone()
-            # else:
-            #     self.geometry_log = torch.cat((self.geometry_log, self.geomety.unsqueeze(0).clone()), dim=0)
+        self.env.geom_update(self.geomety)
 
     def logger(self):
         """
