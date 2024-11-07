@@ -4,7 +4,7 @@ from rsl_rl.env import VecEnv
 
 # geometry clase here TODO: move to own file
 class GeometryRunner:
-    def __init__(self, env: VecEnv, device: torch.device):
+    def __init__(self, env: VecEnv, device: torch.device, steps_per_it):
         """Initializes the geometry runner.
 
         Args:
@@ -24,10 +24,17 @@ class GeometryRunner:
         self.geometry_log = torch.tensor([], device=self.device)
 
         # Values to cntrol the geom update frequency
-        self.min_it = 150
-        self.it_interval = 5
+        self.min_it = 0
+        self.policy_it = 0
+        self.goem_it = 5
+        self.it_interval = self.policy_it + self.goem_it
+        self.steps_per_it = steps_per_it
+        self.count_steps = 0
 
-        self.logged_itterations = torch.tensor([], device=self.device)
+
+        self.logged_itterations = 0
+        self.last_itteration = 0
+
 
         self.gradient = torch.tensor([0.0, 0., 0., 0., 0.], device=self.device)
         self.gradient_analytic = torch.tensor([0.0], device=self.device)
@@ -129,49 +136,52 @@ class GeometryRunner:
 
 
     def store_reward(self, reward, it):
-        """
-            store the reward in the buffer 
-        """
-        # TODO: could maybe use the rebuffer here
-        
 
-        # check if the reward needs to be logged
         if it > self.min_it:
-            # check if the reward needs to be reset
-            # if (self.logged_itterations.numel()) >= self.it_interval and self.g == 15:
-            if (self.logged_itterations.numel()) >= self.it_interval:
-                self.update_distributions(it)
-                self.logged_itterations = torch.tensor([], device=self.device)
-                self.rewards = torch.empty((0, reward.size(0)), device=self.device)
-                # self.update_geom(it)
-                self.geometry_log = torch.tensor([], device=self.device)
-                # print("update geom")
+            # print("it", it)
+            # print("self.logged_itterations", self.logged_itterations)
+            # print("self.last_itteration", self.last_itteration)
 
-            if self.logged_itterations.numel() == 0:
-                self.logged_itterations = torch.tensor([it], device=self.device).unsqueeze(0)
-                self.rewards = reward.clone().unsqueeze(0)
-                # log the geometry values
-                if self.geometry_log.numel() == 0:
-                    self.geometry_log = self.geomety.unsqueeze(0).clone()
-                else:
+            if self.logged_itterations > (self.policy_it)  or self.policy_it == 0 or (self.logged_itterations == (self.policy_it) and self.count_steps == self.steps_per_it):
+                # print("logge geometry: logge itterations", self.logged_itterations, "last itteration", self.last_itteration, "it", it)
+                if self.last_itteration == it:
+                    # print("point_1")
+                    # logg the reward
+                    self.rewards[-1, :] += reward
+                    # check if we need to update the distributions
+                    # print("point_2")
+                    self.count_steps += 1
+                    if self.logged_itterations > self.it_interval and self.count_steps == self.steps_per_it:
+                        # print("point_3")
+                        # reset everything
+                        self.update_distributions(it)
+                        self.rewards = torch.empty((0, reward.size(0)), device=self.device)
+                        self.geometry_log = torch.tensor([], device=self.device)
+                        self.logged_itterations = 0
+                        # self.last_itteration = it
+                        self.count_steps = 0
+                # elif self.last_itteration == it - 1: # do we have a new it value?
+                elif self.last_itteration < it:
+                    # print("point_4")
+                    # create new itteration in logging values
                     self.geometry_log = torch.cat((self.geometry_log, self.geomety.unsqueeze(0).clone()), dim=0)
-                self.g = 0
-                # print("reward_1")
-
-            elif self.logged_itterations[-1] == it:
-                self.rewards[-1, :] += reward
-                # print("reward_2")
-
-            elif self.logged_itterations[-1] == it - 1:
-                self.logged_itterations = torch.cat((self.logged_itterations, torch.tensor([[it]], device=self.device)), dim=0)
-                self.rewards = torch.cat((self.rewards, reward.unsqueeze(0)), dim=0)
-                # log the geometry values
-                if self.geometry_log.numel() == 0:
-                    self.geometry_log = self.geomety.unsqueeze(0).clone()
+                    self.rewards = torch.cat((self.rewards, reward.unsqueeze(0)), dim=0)
+                    # update logging counter
+                    self.logged_itterations += 1
+                    self.last_itteration = it
+                    self.count_steps = 1
                 else:
-                    self.geometry_log = torch.cat((self.geometry_log, self.geomety.unsqueeze(0).clone()), dim=0)
-                # print("reward_3")
-
+                    print ("error-----------------------------------------------------------------------------------") # Handle somehow different
+                return True
+            else:
+                # print("point_5")
+                self.count_steps += 1
+                if self.last_itteration < it:
+                    # print("point_6")
+                    self.logged_itterations += 1
+                    self.last_itteration = it
+                    self.count_steps = 1
+                return False
 
     def update_geom(self, it):
         """
