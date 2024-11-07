@@ -66,7 +66,8 @@ class OnPolicyRunner:
         self.git_status_repos = [rsl_rl.__file__]
 
         # initialize the geometry runner
-        self.geometry_runner = GeometryRunner(env, device)
+        self.geometry_runner = GeometryRunner(env, device, self.num_steps_per_env)
+        self.asyncronous_policy_and_geom_update = False # if true, policy updates are blocked as long as geom data is collected
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):
         # initialize writer
@@ -147,7 +148,7 @@ class OnPolicyRunner:
                         cur_episode_length[new_ids] = 0
 
                     # run whole geometry process
-                    self.geometry_runner.store_reward(rewards, it)
+                    geom_update_procces = self.geometry_runner.store_reward(rewards, it)
 
                 stop = time.time()
                 collection_time = stop - start
@@ -157,9 +158,13 @@ class OnPolicyRunner:
                 self.alg.compute_returns(critic_obs)
 
             self.geometry_runner.update_geom(it)
-            
-            mean_value_loss, mean_surrogate_loss = self.alg.update()
+
+            if not(self.asyncronous_policy_and_geom_update and geom_update_procces):
+                mean_value_loss, mean_surrogate_loss = self.alg.update()
+            else: print("Policy update blocked")
             stop = time.time()
+
+            
             learn_time = stop - start
             self.current_learning_iteration = it
             if self.log_dir is not None:
