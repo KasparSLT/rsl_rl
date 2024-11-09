@@ -15,7 +15,7 @@ from rsl_rl.algorithms import PPO
 from rsl_rl.env import VecEnv
 from rsl_rl.modules import ActorCritic, ActorCriticRecurrent, EmpiricalNormalization
 from rsl_rl.utils import store_code_state
-from rsl_rl.geometry import GeometryRunner
+from rsl_rl.geometry import GeometryRunnerBeta
 
 
 class OnPolicyRunner:
@@ -66,7 +66,7 @@ class OnPolicyRunner:
         self.git_status_repos = [rsl_rl.__file__]
 
         # initialize the geometry runner
-        self.geometry_runner = GeometryRunner(env, device, self.num_steps_per_env)
+        self.geometry_runner = GeometryRunnerBeta(env, device, self.num_steps_per_env)
         self.asyncronous_policy_and_geom_update = False # if true, policy updates are blocked as long as geom data is collected
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):
