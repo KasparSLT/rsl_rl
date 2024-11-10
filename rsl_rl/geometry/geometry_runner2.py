@@ -5,7 +5,7 @@ from rsl_rl.env import VecEnv
 
 # Neural Network for function estimation
 class FunctionEstimator(nn.Module):
-    def __init__(self, input_size, output_size):
+    def __init__(self, input_size, output_size, steps_per_it, min_it, policy_it, goem_it):
         super(FunctionEstimator, self).__init__()
         self.fc1 = nn.Linear(input_size, 64)
         self.fc2 = nn.Linear(64, 64)

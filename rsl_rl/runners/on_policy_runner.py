@@ -16,6 +16,7 @@ from rsl_rl.env import VecEnv
 from rsl_rl.modules import ActorCritic, ActorCriticRecurrent, EmpiricalNormalization
 from rsl_rl.utils import store_code_state
 from rsl_rl.geometry import GeometryRunnerBeta
+from rsl_rl.geometry import GeometryRunnerGauss
 
 
 class OnPolicyRunner:
@@ -66,7 +67,19 @@ class OnPolicyRunner:
         self.git_status_repos = [rsl_rl.__file__]
 
         # initialize the geometry runner
-        self.geometry_runner = GeometryRunnerBeta(env, device, self.num_steps_per_env)
+        self.choose_geometry_runner = "Beta"
+
+        self.min_it = 150
+        self.policy_it = 0
+        self.goem_it = 20
+
+        if self.choose_geometry_runner == "Gauss":
+            self.geometry_runner = GeometryRunnerGauss(env, device, self.num_steps_per_env, self.min_it, self.policy_it, self.goem_it)
+        elif self.choose_geometry_runner == "Beta":
+            self.geometry_runner = GeometryRunnerBeta(env, device, self.num_steps_per_env, self.min_it, self.policy_it, self.goem_it)
+        else:
+            raise AssertionError("Geometry runner not found")
+
         self.asyncronous_policy_and_geom_update = False # if true, policy updates are blocked as long as geom data is collected
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):
@@ -218,11 +231,14 @@ class OnPolicyRunner:
         self.writer.add_scalar("Perf/total_fps", fps, locs["it"])
         self.writer.add_scalar("Perf/collection time", locs["collection_time"], locs["it"])
         self.writer.add_scalar("Perf/learning_time", locs["learn_time"], locs["it"])
-        self.writer.add_scalar("Gradient/Max", self.geometry_runner.gradient.max().item(), locs["it"]) 
-        self.writer.add_scalar("Gradient/Min", self.geometry_runner.gradient.min().item(), locs["it"])
-        self.writer.add_scalar("Gradient/Mean", self.geometry_runner.gradient.mean().item(), locs["it"])
-        # log analytical aporx of gradient
-        self.writer.add_scalar("Gradient/Analytical", self.geometry_runner.gradient_analytic.max().item(), locs["it"])
+        if self.choose_geometry_runner == "Gauss":
+            self.writer.add_scalar("Gradient/Max", self.geometry_runner.gradient.max().item(), locs["it"]) 
+            self.writer.add_scalar("Gradient/Min", self.geometry_runner.gradient.min().item(), locs["it"])
+            self.writer.add_scalar("Gradient/Mean", self.geometry_runner.gradient.mean().item(), locs["it"])
+            # log analytical aporx of gradient
+            self.writer.add_scalar("Gradient/Analytical", self.geometry_runner.gradient_analytic.max().item(), locs["it"])
+        elif self.choose_geometry_runner == "Beta":
+           self.geometry_runner.log(self.writer, locs["it"])
         masked_geom = self.geometry_runner.geomety[:, self.geometry_runner.geom_mask == 1]
         mean_geom = torch.mean(masked_geom, dim=0)
         for i, geom in enumerate(mean_geom):
@@ -328,170 +344,6 @@ class OnPolicyRunner:
 
     def add_git_repo_to_log(self, repo_file_path):
         self.git_status_repos.append(repo_file_path)
-
-
-
-
-
-# # geometry clase here TODO: move to own file
-# class GeometryRunner:
-#     def __init__(self, env: VecEnv, device: torch.device):
-#         """Initializes the geometry runner.
-
-#         Args:
-#             env: The environment to interact with.
-#             device: The device to use.
-#         """
-#         self.env = env
-#         self.device = device
-
-#         # Get geom mask
-#         self.geom_mask = self.env.get_geom_map()
-#         self.distribution = self.initialize_distributions()
-#         self.geomety = self.initialize_geometry()
-
-#         # Initialize reward buffer and observation buffer
-#         self.rewards = torch.tensor([], device=self.device)
-#         self.geometry_log = torch.tensor([], device=self.device)
-
-#         # Values to cntrol the geom update frequency
-#         self.min_it = 150
-#         self.it_interval = 5
-
-#         self.logged_itterations = torch.tensor([], device=self.device)
-
-
-#     def initialize_distributions(self):
-#         """
-#             initialize the distributions for the geometric joints
-#             return: 
-#                     shape: (num_joints, 2)
-#         """
-#         geom_distributions = torch.full((len(self.geom_mask),2), float('nan'), device=self.device)
-#         for i, joint in enumerate(self.geom_mask):
-#             if joint == 1:
-#                 geom_distributions[i] = torch.tensor([0.5, 0.15], device=self.device)
-#         return geom_distributions
-    
-#     def initialize_geometry(self):
-#         """
-#             initialize the geometry values for the geometric joints
-#             return: 
-#                     shape: (num_envs, num_joints)
-#         """
-#         # Create a geometry tensor based on the mask, repeated for each environment
-#         geom = self.geom_mask.clone().float().unsqueeze(0).repeat(self.env.num_envs, 1)
-
-#         # Iterate over each joint and set geometry values for non-filtered joints
-#         for i, dist in enumerate(self.distribution):
-#             if not torch.isnan(dist[0]):
-#                 # Create Gaussian distribution with mean and std for the corresponding joint
-#                 gaussian_samples = torch.normal(mean=dist[0].item(), std=dist[1].item(), size=(self.env.num_envs,), device=self.device)
-#                 geom[:, i] = gaussian_samples
-        
-#         return geom
-
-#     def update_distributions(self, it):
-#         """
-#             process for updating the distributions from observations and rewards
-#         """
-#         # check if needed
-#         # if it > self.min_it and it % self.it_interval == 0:
-#         # estimate the gradient
-#         gradient = self.estimate_gradient()
-
-#         # clip the gradient to [-0.1, 0.1]
-#         gradient = torch.clamp(gradient, -0.1, 0.1)
-
-#         # update the distribution
-#         self.distribution[:, 0] += gradient
-#         # clip the mean
-#         self.distribution[:, 0] = torch.clamp(self.distribution[:, 0], 0, 1)
-
-#         # print all infos
-#         # print("Update distributions-----------------------------------------------------------------------------------------------")
-#         # print("reward: ", self.rewards)
-#         # print("geometries: ", self.geomety)
-#         # print("gradient: ", gradient)
-
-#     def estimate_gradient(self):
-#         """
-#             estimate gradinet of reward(geom)
-#         """
-#         # get the average value for each geometric joint
-#         geom = self.geomety
-#         average_geom = torch.mean(geom, dim=0)
-#         noise = geom - average_geom
-
-#         # print average_geom
-#         print("average", average_geom)
-#         # get the number of datapoints
-#         N = self.rewards.numel()
-
-#         # init gradient shape like self.mask
-#         gradient = torch.zeros_like(self.geom_mask, device=self.device)
-#         # caluculate the gradient
-#         for i in range(self.rewards.size(0)):
-#             for j in range(self.rewards.size(1)):
-#                 gradient += noise[i, :] * self.rewards[i, j]
-#         gradient /= N
-#         return gradient
-
-
-#     def store_reward(self, reward, it):
-#         """
-#             store the reward in the buffer 
-#         """
-#         # TODO: could maybe use the rebuffer here
-        
-
-#         # check if the reward needs to be logged
-#         if it > self.min_it:
-#             # check if the reward needs to be reset
-#             # print(self.rewards)
-#             if self.logged_itterations.numel() >= self.it_interval:
-#                 self.update_distributions(it)
-#                 self.logged_itterations = torch.tensor([], device=self.device)
-#                 self.rewards = torch.empty((0, reward.size(0)), device=self.device)
-#                 self.geometry_log = torch.tensor([], device=self.device)
-
-#             if self.logged_itterations.numel() == 0:
-#                 self.logged_itterations = torch.tensor([it], device=self.device).unsqueeze(0)
-#                 self.rewards = reward.clone().unsqueeze(0)
-#                 # print("first reward")
-#                 # print(self.rewards)
-#             elif self.logged_itterations[-1] == it:
-#                 # print("add reward")
-#                 # print(reward)
-#                 self.rewards[-1, :] += reward
-#             elif self.logged_itterations[-1] == it - 1:
-#                 # print("add new reward")
-#                 self.logged_itterations = torch.cat((self.logged_itterations, torch.tensor([[it]], device=self.device)), dim=0)
-#                 self.rewards = torch.cat((self.rewards, reward.unsqueeze(0)), dim=0)
-
-#     def update_geom(self, it):
-#         """
-#             sample values from the distribution and update the geometry values in the environment
-#         """
-#         # check if neccesary 
-#         if it % self.it_interval == 0:
-#             # sample values from the distribution
-#             for i, dist in enumerate(self.distribution):
-#                 if not torch.isnan(dist[0]):
-#                     # Create Gaussian distribution with mean and std for the corresponding joint
-#                     gaussian_samples = torch.normal(mean=dist[0].item(), std=dist[1].item(), size=(self.env.num_envs,), device=self.device)
-#                     # clip distibution valuse [0, 1]
-#                     gaussian_samples = torch.clamp(gaussian_samples, 0, 1)
-#                     self.geomety[:, i] = gaussian_samples
-
-#             # update the geometry values in the environment
-#             self.env.geom_update(self.geomety)
-
-#             # log the geometry values
-#             if self.geometry_log.numel() == 0:
-#                 self.geometry_log = self.geomety.clone()
-#             else:
-#                 self.geometry_log = torch.cat((self.geometry_log, self.geomety.clone()), dim=0)
 
 
 

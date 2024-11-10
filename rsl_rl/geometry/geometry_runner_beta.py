@@ -1,19 +1,20 @@
 import torch
 from torch.distributions import Normal, Beta
+from rsl_rl.utils.wandb_utils import WandbSummaryWriter
 
 
 from rsl_rl.env import VecEnv
 
 # geometry clase here TODO: move to own file
 class GeometryRunnerBeta:
-    def __init__(self, env: VecEnv, device: torch.device, steps_per_it):
+    def __init__(self, env: VecEnv, device: torch.device, steps_per_it, min_it, policy_it, goem_it):
         """Initializes the geometry runner.
 
         Args:
             env: The environment to interact with.
             device: The device to use.
         """
-        self.stdDev_beta = 1.0
+        self.stdDev_beta = 1.5
 
         self.env = env
         self.device = device
@@ -24,6 +25,7 @@ class GeometryRunnerBeta:
         self.rewards = torch.empty((0, env.num_envs), device=self.device)
         self.geometry_log = torch.tensor([], device=self.device)
         self.distribution_log = torch.tensor([], device=self.device)
+        self.gradient = torch.tensor([], device=self.device)
 
         # Get geom mask
         self.geom_mask = self.env.get_geom_map()
@@ -31,9 +33,9 @@ class GeometryRunnerBeta:
         self.geomety = self.initialize_geometry()
 
         # Values to cntrol the geom update frequency
-        self.min_it = 150
-        self.policy_it = 0
-        self.goem_it = 5
+        self.min_it = min_it
+        self.policy_it = policy_it
+        self.goem_it = goem_it
         self.it_interval = self.policy_it + self.goem_it
         self.steps_per_it = steps_per_it
         self.count_steps = 0
@@ -42,8 +44,6 @@ class GeometryRunnerBeta:
         self.logged_itterations = 0
         self.last_itteration = 0
 
-
-        self.gradient = torch.tensor([0.0, 0., 0., 0., 0.], device=self.device)
         self.gradient_analytic = torch.tensor([0.0], device=self.device)
 
         self.g = 0
@@ -61,6 +61,7 @@ class GeometryRunnerBeta:
                 geom_distributions[i] = torch.tensor([20.0, 20.0], device=self.device)
         # fill the distribution log
         self.fill_distribution_log(geom_distributions)
+        self.fill_gradeint(geom_distributions)
 
         # print("geom_distributions after initalisateion", geom_distributions)
         return geom_distributions
@@ -95,6 +96,12 @@ class GeometryRunnerBeta:
 
         self.distribution_log = distribution_log
         # print("distribution_log", distribution_log)
+    
+    def fill_gradeint(self, geom_distributions = None):
+        if geom_distributions is None:
+            geom_distributions = self.distribution
+        self.gradient = geom_distributions.clone() * 0.0
+
     
     def initialize_geometry(self):
         """
@@ -162,8 +169,8 @@ class GeometryRunnerBeta:
             estimate gradient of reward(geom)
         """
         # print("self.geometry_log", self.geometry_log)
-        print("self.dist", self.distribution)
-        print("self.distribution_log", self.distribution_log)
+        # print("self.dist", self.distribution)
+        # print("self.distribution_log", self.distribution_log)
 
         # get the average value for each geometric joint
         geom = self.geometry_log
@@ -280,3 +287,27 @@ class GeometryRunnerBeta:
 
 
         return average_geom, self.gradient
+    
+
+
+    def log(self, writer, locs):
+        """
+            Log the gradients and distributions using a writer (e.g., TensorBoard or wandb).
+        """
+        # Log the gradients for alpha and beta separately
+        for i in range(self.gradient.size(0)):
+            # print("gradient", self.gradient)
+            alpha_grad = self.gradient[i, 0]
+            beta_grad = self.gradient[i, 1]
+            if not torch.isnan(alpha_grad):                
+                writer.add_scalar(f"Gradient/alpha_grad_{i}", alpha_grad.item(), locs)
+            if not torch.isnan(beta_grad):
+                writer.add_scalar(f"Gradient/beta_grad_{i}", beta_grad.item(), locs)
+
+        # Log the distributions
+        for i, dist in enumerate(self.distribution):
+            alpha, beta = dist[0].item(), dist[1].item()
+            if not torch.isnan(torch.tensor(alpha)):
+                writer.add_scalar(f"Distribution/alpha_{i}", alpha, locs)
+            if not torch.isnan(torch.tensor(beta)):
+                writer.add_scalar(f"Distribution/beta_{i}", beta, locs)
