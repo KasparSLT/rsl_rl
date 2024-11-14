@@ -14,7 +14,7 @@ class GeometryRunnerBeta:
             env: The environment to interact with.
             device: The device to use.
         """
-        self.stdDev_beta = 1.5
+        self.stdDev_beta = 1.0
 
         self.env = env
         self.device = device

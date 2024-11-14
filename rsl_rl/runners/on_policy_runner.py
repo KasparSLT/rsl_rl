@@ -67,11 +67,13 @@ class OnPolicyRunner:
         self.git_status_repos = [rsl_rl.__file__]
 
         # initialize the geometry runner
-        self.choose_geometry_runner = "Beta"
+        self.choose_geometry_runner = "Gauss"
 
-        self.min_it = 150
-        self.policy_it = 0
-        self.goem_it = 20
+
+        self.min_it = 50
+        self.policy_it = 5
+        self.goem_it = 5
+        self.gradient_analytic = False
 
         if self.choose_geometry_runner == "Gauss":
             self.geometry_runner = GeometryRunnerGauss(env, device, self.num_steps_per_env, self.min_it, self.policy_it, self.goem_it)
@@ -152,6 +154,7 @@ class OnPolicyRunner:
                             ep_infos.append(infos["episode"])
                         elif "log" in infos:
                             ep_infos.append(infos["log"])
+                            # print(infos["log"])
                         cur_reward_sum += rewards
                         cur_episode_length += 1
                         new_ids = (dones > 0).nonzero(as_tuple=False)
@@ -161,7 +164,11 @@ class OnPolicyRunner:
                         cur_episode_length[new_ids] = 0
 
                     # run whole geometry process
-                    geom_update_procces = self.geometry_runner.store_reward(rewards, it)
+                    # print("reward", rewards)
+                    if self.gradient_analytic and self.choose_geometry_runner == "Gauss":
+                        geom_update_procces = self.geometry_runner.store_reward(rewards, it, infos["log"]["Episode_Reward/pole_height"])
+                    else:
+                        geom_update_procces = self.geometry_runner.store_reward(rewards, it)
 
                 stop = time.time()
                 collection_time = stop - start
@@ -172,12 +179,14 @@ class OnPolicyRunner:
 
             self.geometry_runner.update_geom(it)
 
-            if not(self.asyncronous_policy_and_geom_update and geom_update_procces):
-                mean_value_loss, mean_surrogate_loss = self.alg.update()
-            else: print("Policy update blocked")
-            stop = time.time()
+            # if not(self.asyncronous_policy_and_geom_update and geom_update_procces):
+            #     mean_value_loss, mean_surrogate_loss = self.alg.update()
+            # else: print("Policy update blocked")
+            # stop = time.time()
 
-            
+            mean_value_loss, mean_surrogate_loss = self.alg.update()
+
+
             learn_time = stop - start
             self.current_learning_iteration = it
             if self.log_dir is not None:
@@ -235,8 +244,11 @@ class OnPolicyRunner:
             self.writer.add_scalar("Gradient/Max", self.geometry_runner.gradient.max().item(), locs["it"]) 
             self.writer.add_scalar("Gradient/Min", self.geometry_runner.gradient.min().item(), locs["it"])
             self.writer.add_scalar("Gradient/Mean", self.geometry_runner.gradient.mean().item(), locs["it"])
-            # log analytical aporx of gradient
-            self.writer.add_scalar("Gradient/Analytical", self.geometry_runner.gradient_analytic.max().item(), locs["it"])
+            if self.gradient_analytic:
+                # log analytical aporx of gradient
+                self.writer.add_scalar("Gradient/Analytical", self.geometry_runner.gradient_analytic.max().item(), locs["it"])
+                # log specific gradient
+                self.writer.add_scalar("Gradient/Specific", self.geometry_runner.specific_gradient.max().item(), locs["it"])
         elif self.choose_geometry_runner == "Beta":
            self.geometry_runner.log(self.writer, locs["it"])
         masked_geom = self.geometry_runner.geomety[:, self.geometry_runner.geom_mask == 1]
