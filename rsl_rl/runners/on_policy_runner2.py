@@ -15,12 +15,11 @@ from rsl_rl.algorithms import PPO
 from rsl_rl.env import VecEnv
 from rsl_rl.modules import ActorCritic, ActorCriticRecurrent, EmpiricalNormalization
 from rsl_rl.utils import store_code_state
-from rsl_rl.geometry import GeometryRunnerBeta
-from rsl_rl.geometry import GeometryRunnerGauss
-from rsl_rl.geometry import GeometryRunnerMVN 
+
+from rsl_rl.geometry import GeometryRunnerMVN2
 
 
-class OnPolicyRunner:
+class OnPolicyRunner2:
     """On-policy runner for training and evaluation."""
 
     def __init__(self, env: VecEnv, train_cfg, log_dir=None, device="cpu"):
@@ -68,20 +67,20 @@ class OnPolicyRunner:
         self.git_status_repos = [rsl_rl.__file__]
 
         # initialize the geometry runner
-        self.choose_geometry_runner = "Beta"
+        self.choose_geometry_runner = "MVN"
 
 
-        self.min_it = 1500
+        self.min_it = 100
         self.policy_it = 5
         self.goem_it = 0
         self.gradient_analytic = False
 
-        if self.choose_geometry_runner == "Gauss":
-            self.geometry_runner = GeometryRunnerGauss(env, device, self.num_steps_per_env, self.min_it, self.policy_it, self.goem_it)
-        elif self.choose_geometry_runner == "Beta":
-            self.geometry_runner = GeometryRunnerBeta(env, device, self.num_steps_per_env, self.min_it, self.policy_it, self.goem_it)
-        elif self.choose_geometry_runner == "MVN":
-            self.geometry_runner = GeometryRunnerMVN(env, device, self.num_steps_per_env, self.min_it, self.policy_it, self.goem_it)
+        # if self.choose_geometry_runner == "Gauss":
+        #     self.geometry_runner = GeometryRunnerGauss(env, device, self.num_steps_per_env, self.min_it, self.policy_it, self.goem_it)
+        # elif self.choose_geometry_runner == "Beta":
+        #     self.geometry_runner = GeometryRunnerBeta(env, device, self.num_steps_per_env, self.min_it, self.policy_it, self.goem_it)
+        if self.choose_geometry_runner == "MVN":
+            self.geometry_runner = GeometryRunnerMVN2(env, device, self.num_steps_per_env, self.min_it, self.policy_it, self.goem_it)
         else:
             raise AssertionError("Geometry runner not found")
 
@@ -167,10 +166,9 @@ class OnPolicyRunner:
 
                     # run whole geometry process
                     # print("reward", rewards)
-                    if self.gradient_analytic and self.choose_geometry_runner == "Gauss":
-                        geom_update_procces = self.geometry_runner.store_reward(rewards, it, infos["log"]["Episode_Reward/pole_height"])
-                    else:
-                        geom_update_procces = self.geometry_runner.store_reward(rewards, it)
+                    # if self.min_it < it:
+                    geom_update_procces = self.geometry_runner.store_reward(rewards, it)
+                    self.geometry_runner.update_geom(it, dones)
 
                 stop = time.time()
                 collection_time = stop - start
@@ -179,16 +177,15 @@ class OnPolicyRunner:
                 start = stop
                 self.alg.compute_returns(critic_obs)
 
-            if it >= 1000:
-                self.geometry_runner.update_geom(it)
+            
+            # self.geometry_runner.update_geom(it)
 
             # if not(self.asyncronous_policy_and_geom_update and geom_update_procces):
             #     mean_value_loss, mean_surrogate_loss = self.alg.update()
             # else: print("Policy update blocked")
             # stop = time.time()
-
+            # print("goem_updates", self.geometry_runner.number_of_samples_per_dist)
             mean_value_loss, mean_surrogate_loss = self.alg.update()
-
 
             learn_time = stop - start
             self.current_learning_iteration = it

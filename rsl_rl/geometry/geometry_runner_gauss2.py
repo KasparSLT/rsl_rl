@@ -17,7 +17,7 @@ class GeometryRunnerGauss:
         # Get geom mask
         self.geom_mask = self.env.get_geom_map()
         self.distribution = self.initialize_distributions()
-        self.geomety = self.initialize_geometry()
+        self.geometry = self.initialize_geometry()
 
         # Initialize reward buffer and observation buffer
         self.rewards = torch.tensor([], device=self.device)
@@ -185,7 +185,7 @@ class GeometryRunnerGauss:
                 elif self.last_itteration < it:
                     # print("point_4")
                     # create new itteration in logging values
-                    self.geometry_log = torch.cat((self.geometry_log, self.geomety.unsqueeze(0).clone()), dim=0)
+                    self.geometry_log = torch.cat((self.geometry_log, self.geometry.unsqueeze(0).clone()), dim=0)
                     self.rewards = torch.cat((self.rewards, reward.unsqueeze(0)), dim=0)
                     if specific_reward is not None:
                         self.specific_reward = torch.cat((self.specific_reward, specific_reward.unsqueeze(0)), dim=0)
@@ -217,17 +217,17 @@ class GeometryRunnerGauss:
                 gaussian_samples = torch.normal(mean=dist[0].item(), std=dist[1].item(), size=(self.env.num_envs,), device=self.device)
                 # clip distibution valuse [0, 1]
                 gaussian_samples = torch.clamp(gaussian_samples, 0, 1)
-                self.geomety[:, i] = gaussian_samples
+                self.geometry[:, i] = gaussian_samples
 
             # update the geometry values in the environment
-        self.env.geom_update(self.geomety)
+        self.env.geom_update(self.geometry)
 
     def logger(self):
         """
             log the geometry values
         """
 
-        geom = self.geomety
+        geom = self.geometry
         average_geom = torch.mean(geom, dim=0)
         average_geom = average_geom[self.geom_mask == 1]
 

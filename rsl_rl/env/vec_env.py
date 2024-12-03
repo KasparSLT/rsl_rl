@@ -90,6 +90,20 @@ class VecEnv(ABC):
             update the geometric values in the environment
         """
         raise NotImplementedError
+    
+    @abstractmethod
+    def distribution_update(self, distributions):
+        """
+            update the distributions in the environment
+        """
+        raise NotImplementedError
+    
+    @abstractmethod
+    def get_distruibution(self):
+        """
+            get the distribution of the environment
+        """
+        raise NotImplementedError
 
     @abstractmethod
     def get_geom_map(self):
