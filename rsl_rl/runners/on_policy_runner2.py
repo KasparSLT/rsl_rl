@@ -71,8 +71,8 @@ class OnPolicyRunner2:
 
 
         self.min_it = 100
-        self.policy_it = 5
-        self.goem_it = 0
+        self.policy_it = 0
+        self.goem_it = 5
         self.gradient_analytic = False
 
         # if self.choose_geometry_runner == "Gauss":
@@ -165,9 +165,9 @@ class OnPolicyRunner2:
                         cur_episode_length[new_ids] = 0
 
                     # run whole geometry process
-                    # print("reward", rewards)
+                    # print("reward", rewards)()
                     # if self.min_it < it:
-                    geom_update_procces = self.geometry_runner.store_reward(rewards, it)
+                    self.geometry_runner.store_reward(rewards, it)
                     self.geometry_runner.update_geom(it, dones)
 
                 stop = time.time()
