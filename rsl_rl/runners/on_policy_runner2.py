@@ -7,6 +7,8 @@ import os
 import statistics
 import time
 import torch
+from torch.serialization import add_safe_globals
+from torch.distributions import MultivariateNormal
 from collections import deque
 from torch.utils.tensorboard import SummaryWriter as TensorboardSummaryWriter
 
@@ -313,6 +315,7 @@ class OnPolicyRunner2:
             "optimizer_state_dict": self.alg.optimizer.state_dict(),
             "iter": self.current_learning_iteration,
             "infos": infos,
+            "geometry_runner": self.geometry_runner.state_dict,
         }
         if self.empirical_normalization:
             saved_dict["obs_norm_state_dict"] = self.obs_normalizer.state_dict()
@@ -324,6 +327,7 @@ class OnPolicyRunner2:
             self.writer.save_model(path, self.current_learning_iteration)
 
     def load(self, path, load_optimizer=True):
+        torch.serialization.add_safe_globals([MultivariateNormal])
         loaded_dict = torch.load(path, weights_only=True)
         self.alg.actor_critic.load_state_dict(loaded_dict["model_state_dict"])
         if self.empirical_normalization:
@@ -332,6 +336,9 @@ class OnPolicyRunner2:
         if load_optimizer:
             self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
         self.current_learning_iteration = loaded_dict["iter"]
+        
+        # also make this optional
+        self.geometry_runner.load_state_dict(loaded_dict["geometry_runner"])
         return loaded_dict["infos"]
 
     def get_inference_policy(self, device=None):

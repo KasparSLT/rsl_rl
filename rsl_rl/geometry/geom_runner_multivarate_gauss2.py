@@ -7,6 +7,11 @@ class GeometryRunnerMVN2:
         self.env = env
         self.device = device
 
+        # logg for the rl process
+        self.parm_dict = {"steps_per_it": steps_per_it, "min_it": min_it, "policy_it": policy_it, "goem_it": goem_it} # TODO add more parameters here (also in the init)
+        self.state_dict = {"distribution": self.env.get_distruibution()[0],
+                            "parameters": self.parm_dict}
+
         # Get the geometry mask from the environment
         self.geom_mask = self.env.get_geom_map()
         
@@ -27,11 +32,12 @@ class GeometryRunnerMVN2:
 
         # cholseky stuff
         self.L_cholseky = torch.linalg.cholesky(self.env.get_distruibution()[0].covariance_matrix)
+        print("L_cholseky geom runner initialisation", self.L_cholseky)
         self.L_cholseky_grad = torch.zeros(self.L_cholseky.size(), device=self.device)
         # noise matrix for each env
         self.L_cholseky_noise = torch.zeros((self.env.num_envs, *self.L_cholseky.size()), device=self.device)
-        self.L_cholseky_var_scale = 0.005
-        self.L_cholseky_cov_scale = 0.005
+        self.L_cholseky_var_scale = 0.1
+        self.L_cholseky_cov_scale = 0.1
         
         # Initialize gradient containers
         self.mean_gradient = torch.tensor([], device=self.device)
@@ -78,6 +84,11 @@ class GeometryRunnerMVN2:
         self.initialize_distribution_log()
         self.sample_geometry(None, 0)
 
+        self.parm_dict = {"steps_per_it": steps_per_it, "min_it": min_it, "policy_it": policy_it, "goem_it": goem_it} # TODO add more parameters here (also in the init)
+        self.state_dict = {"distribution": self.env.get_distruibution()[0],
+                            "parameters": self.parm_dict}
+                             
+
         
     def initialize_distribution(self):
         distribution = self.env.get_distruibution()
@@ -85,54 +96,8 @@ class GeometryRunnerMVN2:
         self.variances = distribution.variances
         self.covariances = distribution.covariances
 
-    # def initialize_distribution_log(self):
-    #     self.distribution_log = []  # Clear existing distributions
-    #     print("create new distributions")
-    #     print("mean", self.mean)
-    #     print("variances", self.variances)
-    #     print("covariances", self.covariances)
 
-    #     for _ in range(self.env.num_envs):
-    #         run = True
-    #         while run:  # Loop until a valid covariance matrix is constructed  TODO: find a way to always construct valid covariance matrix
-    #             # Sample Gaussian noise for mean based on `mean_std`
-    #             mean_noise = torch.randn_like(self.mean) * torch.sqrt(self.mean_std)
-    #             noisy_mean = self.mean + mean_noise
-
-    #             # Sample Gaussian noise for variances and covariances
-    #             variance_noise = torch.randn_like(self.variances) * torch.sqrt(self.variances_std)
-    #             noisy_variances = torch.clamp(self.variances + variance_noise, min=1e-5)  # Ensure positive variances
-
-    #             covar_noise = torch.randn_like(self.covariances) * torch.sqrt(self.covariances_std)
-    #             noisy_covariances = torch.clamp(self.covariances + covar_noise, min=-1.0, max=1.0)  # Clamp covariances
-
-    #             # Construct the noisy covariance matrix
-    #             noisy_cov_matrix = torch.diag(noisy_variances) / 2
-    #             off_diag_indices = torch.triu_indices(self.num_joints, self.num_joints, offset=1)
-    #             noisy_cov_matrix[off_diag_indices[0], off_diag_indices[1]] = noisy_covariances
-
-    #             # Symmetrize and add jitter
-    #             noisy_cov_matrix = (noisy_cov_matrix + noisy_cov_matrix.T)
-    #             noisy_cov_matrix += torch.eye(self.num_joints, device=self.device) * 1e-4
-    #             # print("noisy_cov_matrix", noisy_cov_matrix)
-
-    #             # Check eigenvalues
-    #             eigenvalues = torch.linalg.eigvals(noisy_cov_matrix).real
-    #             if (eigenvalues >= 1e-5).all():  # Valid matrix if all eigenvalues are positive
-    #                 # store the noise
-    #                 self.mean_noise.append(mean_noise)
-    #                 self.variances_noise.append(variance_noise)
-    #                 self.covariances_noise.append(covar_noise)
-
-    #                 # Store the valid distribution
-    #                 distribution = MultivariateNormal(noisy_mean, noisy_cov_matrix)
-    #                 self.distribution_log.append(distribution)
-
-    #                 run = False
-    #             else:
-    #                 print("Resampling noise due to invalid covariance matrix. Eigenvalues:", eigenvalues)
-
-    def initialize_distribution_log(self): # this function is using cholesky decomposition to create a valid covariance matrix
+    def initialize_distribution_log(self): # this function is using cholesky decomposition to create a valid covariance matrix  
 
         # Reset the loggs
         self.distribution_log = [] 
@@ -143,9 +108,23 @@ class GeometryRunnerMVN2:
 
         # Calculate base covariance matrix for logging
         base_cov_matrix = torch.matmul(self.L_cholseky, self.L_cholseky.T)
-        self.variance = torch.diag(base_cov_matrix)
+        self.variances = torch.diag(base_cov_matrix)
         lower_triangular_indices = torch.tril_indices(self.num_joints, self.num_joints, offset=-1)
         self.covariances = base_cov_matrix[lower_triangular_indices[0], lower_triangular_indices[1]]
+
+        # print the gradients
+        print("mean_gradient", self.mean_gradient)
+        print("L_cholseky_grad", self.L_cholseky_grad)
+        print("variances_gradient", self.variances_gradient)
+        print("covariances_gradient", self.covariances_gradient)
+
+        # print the current distributions
+        print("mean", self.mean)
+        print("L_cholseky", self.L_cholseky)
+        print("base_cov_matrix", base_cov_matrix)
+        print("variance", self.variances)
+        print("covariances", self.covariances)
+
 
 
         for _ in range(self.env.num_envs):
@@ -153,18 +132,19 @@ class GeometryRunnerMVN2:
             while run:
                 # Add Gaussian noise to diagonal elements (variances)
                 L_diag_noise = torch.randn(self.L_cholseky.shape[0], device=self.device) * self.L_cholseky_var_scale
-                cholseky_noise = self.L_cholseky + torch.diag(L_diag_noise)
+                cholseky_noise = torch.diag(L_diag_noise)
 
                 # Add noise to off-diagonal elements separately
                 L_off_diag_noise = torch.randn_like(self.L_cholseky) * self.L_cholseky_cov_scale
                 L_off_diag_noise = torch.tril(L_off_diag_noise, diagonal=-1)  # Keep only the lower triangular part
                 cholseky_noise += L_off_diag_noise
                 # Construct the noisy covariance matrix
-                noisy_cov_matrix = torch.matmul(cholseky_noise, cholseky_noise.T)
+                noisy_L = self.L_cholseky + cholseky_noise
+                noisy_cov_matrix = torch.matmul(noisy_L, noisy_L.T)
 
                 # Check if the matrix is positive definite
                 eigenvalues = torch.linalg.eigvals(noisy_cov_matrix).real
-                if (eigenvalues >= 1e-10).all():
+                if (eigenvalues >= 1e-8).all():
 
                     # perturb the mean
                     mean_noise = torch.randn_like(self.mean) * self.mean_std
@@ -177,9 +157,17 @@ class GeometryRunnerMVN2:
                     self.mean_noise[_] = mean_noise
                     self.L_cholseky_noise[_] = cholseky_noise
 
+                    # calculate and logg the noise of the variances and covariances
+                    noise_of_cov_matrix = noisy_cov_matrix - base_cov_matrix
+                    self.variances_noise[_] = torch.diag(noise_of_cov_matrix)
+                    lower_triangular_indices = torch.tril_indices(self.num_joints, self.num_joints, offset=-1)
+                    self.covariances_noise[_] = noise_of_cov_matrix[lower_triangular_indices[0], lower_triangular_indices[1]]
+
                     run = False
                 else:
                     print("Resampling noise due to invalid covariance matrix. Eigenvalues:", eigenvalues)
+        
+        self.state_dict["distribution"] = MultivariateNormal(self.mean, base_cov_matrix)
 
 
 
@@ -207,7 +195,7 @@ class GeometryRunnerMVN2:
     def update_distributions(self):
         # Update the mean, and L_cholseky
         self.mean += self.mean_gradient * self.mean_learning_rate
-        # self.L_cholseky += self.L_cholseky_grad * self.mean_learning_rate
+        self.L_cholseky += self.L_cholseky_grad * self.mean_learning_rate
 
         # TODO: ensure that the resulting distribution is positive definite
 
@@ -215,11 +203,12 @@ class GeometryRunnerMVN2:
         # scale the reward
         factor = (self.min_samples_per_dist / self.number_of_samples_per_dist)
         self.rewards *= factor
+        self.rewards = torch.clamp(self.rewards, -10000, 10000)
 
         self.mean_gradient = torch.zeros(self.mean.size(), device=self.device)
         self.L_cholseky_grad = torch.zeros(self.L_cholseky.size(), device=self.device)
-        # self.variances_gradient = torch.zeros(self.variances.size(), device=self.device)
-        # self.covariances_gradient = torch.zeros(self.covariances.size(), device=self.device)
+        self.variances_gradient = torch.zeros(self.variances.size(), device=self.device)
+        self.covariances_gradient = torch.zeros(self.covariances.size(), device=self.device)
 
         for i, reward in enumerate(self.rewards):
             self.mean_gradient += reward * self.mean_noise[i]
@@ -227,16 +216,29 @@ class GeometryRunnerMVN2:
         
         self.mean_gradient /= self.rewards.numel() 
         self.L_cholseky_grad /= self.rewards.numel()
-        print("mean_gradient", self.mean_gradient)
 
-        # clip the gradients to be half of the std of the noise
-        self.mean_gradient = torch.clamp(self.mean_gradient, -0.5 * self.mean_std, 0.5 * self.mean_std)
-        # TODO find way to clip the cholseky gradient
+        # Use noise to estimate the gradient of the variances and covariances TODO also get the gradient form comparring L@L^T -> might be interesting
+        for i, reward in enumerate(self.rewards):
+            self.variances_gradient += reward * self.variances_noise[i]
+            self.covariances_gradient += reward * self.covariances_noise[i]
+        
+        self.variances_gradient /= self.rewards.numel()
+        self.covariances_gradient /= self.rewards.numel()
+        # check if any of the rewards is > 10000 or < -10000 or nan and print the case if so 
+        if (self.rewards > 10000).any():
+            print("rewards bigger than 10000")
+            print("rewards", self.rewards)
+        elif (self.rewards < -10000).any():
+            print("rewards smaller than -10000")
+            print("rewards", self.rewards)
+        elif torch.isnan(self.rewards).any():
+            print("rewards is nan")
+            print("rewards", self.rewards)
+        print("mean_gradient before clipping", self.mean_gradient)
+        print("L_cholseky_grad before clipping", self.L_cholseky_grad)
 
-        # estimate the gradient for the variances and covariances
-        self.variances_gradient = torch.diag(self.L_cholseky_grad)
-        lower_triangular_indices = torch.tril_indices(self.num_joints, self.num_joints, offset=-1)
-        self.covariances_gradient = self.L_cholseky_grad[lower_triangular_indices[0], lower_triangular_indices[1]]
+        self.mean_gradient = torch.clamp(self.mean_gradient, -0.75 * self.mean_std, 0.75 * self.mean_std)
+        self.L_cholseky_grad = torch.clamp(self.L_cholseky_grad, -0.75 * self.L_cholseky_var_scale, 0.75 * self.L_cholseky_var_scale)
 
 
 
@@ -303,5 +305,31 @@ class GeometryRunnerMVN2:
             for i, covariance in enumerate(self.covariances):
                 if not torch.isnan(covariance):
                     writer.add_scalar(f"Distribution/covariance_{i}", covariance.item(), locs)
+
+    def load_state_dict(self, state_dict):
+        self.state_dict = state_dict
+        self.mean = state_dict["distribution"].mean
+        print("freshly loaded mean", self.mean)
+        # self.variances = state_dict["distribution"].variance
+        # self.covariances = state_dict["distribution"].covariance
+        self.L_cholseky = torch.linalg.cholesky(state_dict["distribution"].covariance_matrix)
+        self.variances = torch.diag(state_dict["distribution"].covariance_matrix)
+        lower_triangular_indices = torch.tril_indices(self.num_joints, self.num_joints, offset=-1)
+        self.covariances = state_dict["distribution"].covariance_matrix[lower_triangular_indices[0], lower_triangular_indices[1]]
+        # logg and add the rest
+
+        # care about the parameters
+        self.parm_dict = state_dict["parameters"]
+        self.steps_per_it = self.parm_dict["steps_per_it"]
+        self.min_it = self.parm_dict["min_it"]
+        self.policy_it = self.parm_dict["policy_it"]
+        self.goem_it = self.parm_dict["goem_it"]
+
+        # push the distirbution and mean geom to the env
+        # fill distribution logg with the current distribution
+        self.distribution_log = [state_dict["distribution"]] * self.env.num_envs
+        self.geometry = torch.stack([self.mean] * self.env.num_envs, dim=0)
+        self.env.distribution_update(self.distribution_log)
+        self.env.geom_update(self.geometry)
 
 
