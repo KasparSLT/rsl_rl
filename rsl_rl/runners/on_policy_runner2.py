@@ -36,8 +36,8 @@ class OnPolicyRunner2:
             num_critic_obs = extras["observations"]["critic"].shape[1]
         else:
             num_critic_obs = num_obs
-        actor_critic_class = eval(self.policy_cfg.pop("class_name"))  # ActorCritic
-        actor_critic: ActorCritic | ActorCriticRecurrent = actor_critic_class(
+        actor_critic_class = eval(self.policy_cfg.pop("class_name"))  # ActorCritic (rsl_rl.modules.actor_critic.ActorCritic) (here also recurrent could be chosen, find out how exactly)
+        actor_critic: ActorCritic | ActorCriticRecurrent = actor_critic_class( # how to make this recurrent here???
             num_obs, num_critic_obs, self.env.num_actions, **self.policy_cfg
         ).to(self.device)
         alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
@@ -45,6 +45,7 @@ class OnPolicyRunner2:
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
         self.empirical_normalization = self.cfg["empirical_normalization"]
+        # here the extra configs for geom runner could be added and also the second ppo runner
         if self.empirical_normalization:
             self.obs_normalizer = EmpiricalNormalization(shape=[num_obs], until=1.0e8).to(self.device)
             self.critic_obs_normalizer = EmpiricalNormalization(shape=[num_critic_obs], until=1.0e8).to(self.device)
@@ -133,8 +134,14 @@ class OnPolicyRunner2:
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
                     actions = self.alg.act(obs, critic_obs)
+                    print("actions", actions)
                     obs, rewards, dones, infos = self.env.step(actions.to(self.env.device)) # dones: tensor of terminated environments
                     # move to the right device
+                    print("obs", obs)
+                    print("critic_obs", critic_obs)
+                    print("rewards", rewards)
+                    print("dones", dones)
+                    print("infos", infos)
                     obs, critic_obs, rewards, dones = (
                         obs.to(self.device),
                         critic_obs.to(self.device),
@@ -167,10 +174,7 @@ class OnPolicyRunner2:
                         cur_episode_length[new_ids] = 0
 
                     # run whole geometry process
-                    # print("reward", rewards)()
-                    # if self.min_it < it:
-                    self.geometry_runner.store_reward(rewards, it)
-                    self.geometry_runner.update_geom(it, dones)
+                    self.geometry_runner.run_geom(it, rewards, dones)
 
                 stop = time.time()
                 collection_time = stop - start

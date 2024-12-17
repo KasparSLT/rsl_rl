@@ -168,6 +168,11 @@ class PPO:
 
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
 
+            # **CHECK 2: Verify model parameters require gradients**
+            for name, param in self.actor_critic.named_parameters():
+                if not param.requires_grad:
+                    print(f"WARNING: Parameter '{name}' does not require grad. This may prevent loss from backpropagating.")
+
             # Gradient step
             self.optimizer.zero_grad()
             loss.backward()

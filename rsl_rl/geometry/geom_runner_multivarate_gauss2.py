@@ -250,9 +250,6 @@ class GeometryRunnerMVN2:
                 print("first log")
             self.rewards += reward
 
-    def update_geom(self, it, envs = None):
-        self.sample_geometry(envs, it)
-
     def geom_opt_step(self, it):
         self.estimate_gradient()
         self.update_distributions()
@@ -265,6 +262,10 @@ class GeometryRunnerMVN2:
         print("update the distributions")
         self.env.distribution_update(self.distribution_log)
         # self.env.reset() # maybe put back in, but for men episode lentht observation currently commented out
+    
+    def run_geom(self, it, rewards, envs = None):
+        self.store_reward(rewards, it)
+        self.sample_geometry(envs, it)
 
 
     def log(self, writer, locs):
@@ -331,5 +332,6 @@ class GeometryRunnerMVN2:
         self.geometry = torch.stack([self.mean] * self.env.num_envs, dim=0)
         self.env.distribution_update(self.distribution_log)
         self.env.geom_update(self.geometry)
+
 
 
