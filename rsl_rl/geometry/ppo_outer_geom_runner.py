@@ -30,7 +30,7 @@ class GeometryRunnerPPO:
         self.scale_mean = 0.1
         self.scale_cholseky = 0.1
 
-        self.history = [1, 2, 3, 5, 10]
+        self.history = [1, 2, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
     
         self.cfg = train_cfg
         print("init policy runner")
@@ -45,12 +45,14 @@ class GeometryRunnerPPO:
         # obs, extras = self.env.get_observations() -> make this to be a function of the inner policy runner
         # num_obs = env.num_envs
         # num_actions = int(self.num_geom_joints + (self.num_geom_joints * (self.num_geom_joints + 1)) / 2.0) # mean and L_cholskiy 
-        self.num_actions = int(self.num_geom_joints) # only mean
+        self.num_geom_actions = int(self.num_geom_joints)
+        self.num_policy_param_actions = 2   # [cange std of policy action, bool wheather to change the geom]
+        self.num_actions = int(self.num_geom_joints) + self.num_policy_param_actions# only mean
         num_obs_train = len(self.policy_runner.needed_observations)
         num_obs_geom = self.num_geom_joints
 
-        # self.num_obs = (num_obs_train * 1  + self.num_actions * 1) * (1+len(self.history))
-        self.num_obs = 78
+        self.num_obs = (num_obs_train * 1  + self.num_actions * 1) * (1+len(self.history))
+        # self.num_obs = 72
         # check for extra obs here, but not relevat for now
         num_critic_obs = self.num_obs    # TODO add extra obs (infos about ongoing training)here
         actor_critic_class = eval(self.policy_cfg.pop("class_name"))
@@ -90,6 +92,10 @@ class GeometryRunnerPPO:
         # mean and L_cholskiy
         self.mean = self.env.get_distruibution()[0].mean
         self.L_cholseky = torch.linalg.cholesky(self.env.get_distruibution()[0].covariance_matrix)
+
+        self.nom_policy_param_actions = torch.zeros(self.num_policy_param_actions, dtype=torch.float, device=self.device)
+        
+        self.distributions_old = None
 
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):
@@ -138,14 +144,16 @@ class GeometryRunnerPPO:
         tot_iter = start_iter + num_learning_iterations
 
         actions = torch.zeros(self.env.num_envs, self.num_actions, dtype=torch.float, device=self.device)
+        print("dim actions init", actions.shape)
 
-        num_policy_it = 50
+        num_policy_it = 200
         for it in range(start_iter, tot_iter):
             # with torch.inference_mode():
             # adapt the geometry
             if it > num_policy_it:
                 actions = self.alg.act(obs, critic_obs)
                 self.apply_actions(actions)
+                print("dim actions actualy", actions.shape)
             print("it_outer loop", it)
             # sample data
             obs, rewards, dones, infos = self.policy_runner.step(self.writer, it)
@@ -157,16 +165,17 @@ class GeometryRunnerPPO:
             for h in self.history:
                 if h < len(opsbuffer):
                     obs = torch.cat((obs, opsbuffer[h].clone()), dim=1)
-                    # print("dim opsbuffer", opsbuffer[h].shape)
                 else: 
-                    obs = torch.cat((obs, torch.zeros(self.env.num_envs, self.num_obs, device=self.device)), dim=1)
+                    # obs = torch.cat((obs, torch.zeros((self.env.num_envs, self.num_obs), device=self.device)), dim=1)
+                    obs = torch.cat((obs, torch.zeros_like(opsbuffer[0], device=self.device)), dim=1)
                 if h < len(actbuffer):
-                    # print(" dim actbuffer", actbuffer[h].shape)
                     obs = torch.cat((obs, actbuffer[h].clone()), dim=1)
+
                 else:
-                    obs = torch.cat((obs, torch.zeros(self.env.num_envs, self.num_actions, device=self.device)), dim=1)
-                # print("dim obs", obs.shape)
+                    # obs = torch.cat((obs, torch.zeros((self.env.num_envs, self.num_actions), device=self.device)), dim=1)
+                    obs = torch.cat((obs, torch.zeros_like(actbuffer[0], device=self.device)), dim=1)
             critic_obs = obs
+            print("dim_obs", obs.shape)
             if it > num_policy_it:
                 it = self.policy_runner.current_learning_iteration
                 obs, critic_obs, rewards, dones = (
@@ -260,16 +269,36 @@ class GeometryRunnerPPO:
 
     def apply_actions(self, actions):
         distributions = []
+        self.nom_policy_param_actions[1] = 0.0
         for i, action in enumerate(actions):
             # print("action", action)
-            mean = torch.ones_like(self.mean) * 0.5 + torch.tanh(action) * 0.5
-            # print("action_tanh", torch.tanh(action))
-            distributions.append(MultivariateNormal(mean.to(self.device), torch.eye(self.num_geom_joints).to(self.device) * 1e-8))
+            if True or action[self.num_geom_actions+1] >= 0.0 or self.distributions_old is None:
+                geom_action = action[ : self.num_geom_actions]
+                mean = torch.ones_like(self.mean) * 0.5 + torch.tanh(geom_action) * 0.5
+                # print("action_tanh", torch.tanh(action))
+                distributions.append(MultivariateNormal(mean.to(self.device), torch.eye(self.num_geom_joints).to(self.device) * 1e-8))
+                self.nom_policy_param_actions[1] += 1.0
+            else:
+                distributions.append(self.distributions_old[i])
         self.policy_runner.env.distribution_update(distributions)
+        self.nom_policy_param_actions[1] = self.nom_policy_param_actions[1] / self.env.num_envs
+
+        policy_param_actions = actions[:, self.num_geom_actions : ]
+        # put relu on the std for policy action 
+        # print(" ", policy_param_actions)
+        std_for_policy_action = torch.relu(torch.flatten(policy_param_actions[:, 0])+1) + 1e-5
+        self.policy_runner.std_tensor = std_for_policy_action
+        self.nom_policy_param_actions[0] = torch.mean(std_for_policy_action)
+
+        self.distributions_old = distributions
+
+
+
+
 
         print("mean",torch.mean(actions, dim=0))
 
-        self.mean = torch.ones_like(self.mean) * 0.5 + torch.tanh(torch.mean(actions,dim=0)) * 0.5
+        self.mean = torch.ones_like(self.mean) * 0.5 + torch.tanh(torch.mean(actions[:, : self.num_geom_actions],dim=0)) * 0.5
         print("mean", self.mean)
         self.L_cholseky = torch.eye(self.num_geom_joints) * 1e-8   
 
@@ -322,11 +351,19 @@ class GeometryRunnerPPO:
             self.writer.add_scalar("Outer/mean_reward", statistics.mean(locals["rewbuffer"]), locals["it"])
             self.writer.add_scalar("Outer/std_reward", statistics.stdev(locals["rewbuffer"]), locals["it"])
 
+
+        # log policy actions
+        for i, action in enumerate(self.nom_policy_param_actions):
+            self.writer.add_scalar(f"Outer/nom_policy_param_actions_{i}", action.item(), locals["it"])  
+
         # add geometiy data
         for i, manin in enumerate(self.mean):
             self.writer.add_scalar(f"Outer/mean_geom_{i}", manin.item(), locals["it"])
             # logg the variance
             self.writer.add_scalar(f"Outer/mena_var_{i}", locals["actions"][:, i].var().item(), locals["it"])
+
+        for i, action in enumerate(locals["actions"][0]):
+            self.writer.add_scalar(f"Outer/action_geom_{i}", 0.5 + torch.tanh(action) * 0.5, locals["it"])
         
 
         

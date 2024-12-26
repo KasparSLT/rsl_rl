@@ -70,6 +70,8 @@ class ActorCritic(nn.Module):
         # self.init_memory_weights(self.memory_a, 0.001, 0.)
         # self.init_memory_weights(self.memory_c, 0.001, 0.)
 
+        self.std_tensor = None
+
     @staticmethod
     # not used at the moment
     def init_weights(sequential, scales):
@@ -90,18 +92,30 @@ class ActorCritic(nn.Module):
 
     @property
     def action_std(self):
-        return self.distribution.stddev
+        if self.std_tensor is None:
+            return self.distribution.stddev
+        else:
+            # print("return the tensor mean")
+            # print(self.std_tensor[0,0])
+            return torch.mean(self.std_tensor)
 
     @property
     def entropy(self):
         return self.distribution.entropy().sum(dim=-1)
 
-    def update_distribution(self, observations):
+    def update_distribution(self, observations, std_tensor=None):
         mean = self.actor(observations)
-        self.distribution = Normal(mean, mean * 0.0 + self.std)
+        if std_tensor is None:
+            self.distribution = Normal(mean, mean * 0.0 + self.std)
+        else:
+            std_tensor = std_tensor.view(-1, 1)
+            # print(std_tensor[0,0])
+            self.distribution = Normal(mean, std_tensor)
+            self.std_tensor = std_tensor
 
-    def act(self, observations, **kwargs):
-        self.update_distribution(observations)
+
+    def act(self, observations, std_tensor=None, **kwargs):
+        self.update_distribution(observations, std_tensor)
         return self.distribution.sample()
 
     def get_actions_log_prob(self, actions):

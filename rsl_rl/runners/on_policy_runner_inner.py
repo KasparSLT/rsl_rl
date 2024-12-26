@@ -89,7 +89,10 @@ class InnerOnPolicyRunner:
         self.history = history
 
         self.geom_map = env.get_geom_map()
-        self.num_joints = env.get_geom_map().numel()  
+        self.num_joints = env.get_geom_map().numel() 
+        self.num_geom_joints = int(sum(self.geom_map))
+
+        self.std_tensor = None
 
 
     def step(self, writer, current_it, num_steps: int = 1, init_at_random_ep_len: bool = False,):
@@ -103,13 +106,19 @@ class InnerOnPolicyRunner:
         dones_outer = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device) # track terminated envs
         infos_outer = {} # TODO what exactly are they/is needed
 
+        # Initialize observation tracking and step counts. E.g. stuff to check quality of geom actuators
+        obs_series = torch.zeros((self.env.num_envs, 0, self.num_geom_joints), device=self.device) # TODO hardcoded for double pendulum
+        step_counts = torch.zeros(self.env.num_envs, dtype=torch.int, device=self.device)
+        weighted_std_sum = torch.zeros((self.env.num_envs,self.num_geom_joints), device=self.device)  # Sum of weighted stds for each env
+
+
         start_iter = current_it
         tot_iter = start_iter + num_steps
         for it in range(start_iter, tot_iter):
             start = time.time()
             # torch.inference_mode() should be already active from the outer loop, is there a way to check this?
             for i in range(self.num_steps_per_env):
-                actions = self.alg.act(self.obs, self.critic_obs)
+                actions = self.alg.act(self.obs, self.critic_obs, self.std_tensor)
                 self.obs, rewards, dones, infos = self.env.step(actions.to(self.env.device))
                 self.obs, self.critic_obs, rewards, dones = (
                     self.obs.to(self.device),
@@ -141,6 +150,30 @@ class InnerOnPolicyRunner:
                 rewards_outer += rewards
                 dones_outer += dones
 
+                # Accumulate observations
+                geom_obs = self.obs[:, self.num_joints:]
+                geom_obs = geom_obs[:, self.geom_map.bool()]
+                # print("geom_obs_dim", geom_obs.shape)
+                obs_series = torch.cat([obs_series, geom_obs.unsqueeze(1)], dim=1)
+                # print("obs_series_dim", obs_series.shape)
+                step_counts += 1
+
+                # Handle resets for done environments
+                for steps in range(1, self.num_steps_per_env + 1):
+                    # Identify environments that need to be reset and have exactly `steps` logged observations
+                    reset_envs = (dones > 0) & (step_counts == steps)
+                    if reset_envs.any():
+                        reset_obs = obs_series[reset_envs]
+                        # reset_counts = step_counts[reset_envs]
+
+                        if reset_obs.shape[1] > 1:
+                            # Calculate std and weight it by the number of steps
+                            std_devs = reset_obs[:,-steps:].std(dim=1)
+                            weighted_std_sum[reset_envs] += std_devs * steps
+
+                        # Reset count done environments
+                        step_counts[reset_envs] = 0
+
 
             stop = time.time()
             collection_time = stop - start
@@ -152,8 +185,33 @@ class InnerOnPolicyRunner:
             # with torch.enable_grad():   # enable gradient here for the update, will be disabled as soon as in outer loop again 
             mean_value_loss, mean_surrogate_loss = self.alg.update()
 
+            obs_pos_log = self.obs[0, :self.num_joints]
+            obs_pos_geom_joit_log = obs_pos_log[self.geom_map.bool()]
+
+
             learn_time = stop - start
             self.current_learning_iteration = it
+
+            # calulate the final geom_std
+            for steps in range(1, self.num_steps_per_env + 1):
+                # Identify environments that need to be reset and have exactly `steps` logged observations
+                relevant_envs = (dones > 0) & (step_counts == steps)
+                if relevant_envs.any():
+                    relevant_obs = obs_series[relevant_envs]
+                    # relevant_counts = step_counts[relevant_envs]
+
+                    if relevant_obs.shape[1] > 1:
+                        # Calculate std and weight it by the number of steps
+                        std_devs = relevant_obs[:,-steps:].std(dim=1)
+                        weighted_std_sum[relevant_envs] += std_devs * steps
+            
+            # Calculate the mean of the std
+            # print("weighted_std_sum", weighted_std_sum.shape)
+            geom_std = torch.mean(weighted_std_sum, dim=0)/self.num_steps_per_env
+            # print(f"Geom std: {geom_std}")
+
+            
+            
             if self.log_dir is not None:
                 self.log(writer, locals())
             # if it % self.save_interval == 0:
@@ -193,7 +251,7 @@ class InnerOnPolicyRunner:
 
         # positional observations
         obs_pos = self.obs[:, :self.num_joints]
-        obs_pos_geom_joit = obs_pos[:, self.geom_map.int()]
+        obs_pos_geom_joit = obs_pos[:, self.geom_map.bool()]
 
         obs_outer = torch.cat((obs_outer, obs_pos_geom_joit), dim=1)
         return obs_outer, rewards_outer, dones_outer, infos_outer
@@ -228,9 +286,21 @@ class InnerOnPolicyRunner:
                 else:
                     writer.add_scalar("Episode/" + key, value, locs["it"])
                     ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
-        mean_std = self.alg.actor_critic.std.mean()
+        
+        if self.alg.actor_critic.std_tensor is None:
+            mean_std = self.alg.actor_critic.std.mean()
+        else:
+            mean_std = torch.mean(self.alg.actor_critic.std_tensor)
+
         fps = int(self.num_steps_per_env * self.env.num_envs / (locs["collection_time"] + locs["learn_time"]))
 
+        for i, obs in enumerate(locs["obs_pos_geom_joit_log"]):
+            writer.add_scalar(f"Geometry/pos_geomjoint_{i}_obs", obs, locs["it"])
+        
+        for i, obs in enumerate(locs["geom_std"]):
+            writer.add_scalar(f"Geometry/pos_geomjoint_{i}_std", obs, locs["it"])
+
+    
         writer.add_scalar("Policy/Loss/value_function", locs["mean_value_loss"], locs["it"])
         writer.add_scalar("Policy/Loss/surrogate", locs["mean_surrogate_loss"], locs["it"])
         writer.add_scalar("Policy/Loss/learning_rate", self.alg.learning_rate, locs["it"])
